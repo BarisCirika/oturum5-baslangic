@@ -24,8 +24,17 @@ import sys
 # --- Kural seti: (etiket, etki, regex, aciklama) ---------------------------
 KURALLAR = [
     ("SIR", "yuksek",
-     r"(?i)(api[_-]?key|secret|token|password)\s*[=:]\s*['\"][A-Za-z0-9_\-]{12,}",
+     r"(?i)(api[_-]?key|secret|token|password|parola|s[iı]fre|şifre)"
+     r"\s*[=:]\s*['\"][A-Za-z0-9_\-]{12,}",
      "Koda gomulu sir/anahtar izi"),
+    # Kisa deger de sirdir: uc haneli bir parola atamasi 12 karakter
+    # esigine takilmadigi icin eskiden GORUNMUYORDU. Deger RAPORA
+    # YAZILMAZ, yalniz dosya:satir bildirilir (rapor PR yorumu olarak
+    # herkese acik oldugu icin bu onemli).
+    ("SIR", "yuksek",
+     r"(?im)(api[_-]?key|secret|token|password|parola|s[iı]fre|şifre)"
+     r"\s*[=:]\s*(['\"][^'\"\n]{1,11}['\"]|[A-Za-z0-9_@#!.\-]{1,11}\s*(?:$|[,;)]))",
+     "Kisa/zayif sir degeri (koda gomulu parola)"),
     ("SIR", "yuksek",
      r"sk-[A-Za-z0-9\-]{20,}",
      "Anahtar bicimli dize (sk-...)"),
