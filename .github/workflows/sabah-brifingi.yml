@@ -1,0 +1,132 @@
+# Sabah brifingi — her sabah deponun son 24 saatini tek issue'da toplar.
+#
+# Veri kaynagi: GitHub'in KENDI API'si (actions/github-script icindeki
+# github istemcisi). Ek servis, hesap ya da secret YOK; kosuya otomatik
+# verilen GITHUB_TOKEN yetiyor.
+name: sabah-brifingi
+
+on:
+  schedule:
+    # UTC! Yerel saat DEGIL. Turkiye UTC+3 ve yaz saati uygulamiyor:
+    # yerel 07:00 = 04:00 UTC.
+    - cron: "0 4 * * *"
+  workflow_dispatch:      # elle test
+
+concurrency:
+  group: brifing-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write           # brifing issue'sunu acmak icin
+  pull-requests: read     # PR listesini okumak icin
+  actions: read           # kosu gecmisini okumak icin
+
+jobs:
+  brifing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Brifingi uret ve issue ac
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const SAAT = 24;
+            const sinir = new Date(Date.now() - SAAT * 60 * 60 * 1000);
+            const gun = (d) => new Date(d).toISOString().slice(0, 16).replace("T", " ");
+            const yas = (d) => {
+              const s = Math.floor((Date.now() - new Date(d)) / 3600000);
+              return s < 24 ? `${s} saat` : `${Math.floor(s / 24)} gun`;
+            };
+
+            // --- 1) Son 24 saatte merge edilen PR'lar --------------------
+            // Kapali PR'lari tarihe gore alip merged_at'e bakiyoruz:
+            // kapali != merge edilmis (kapatilip birakilanlar da var).
+            const kapali = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "closed", sort: "updated",
+              direction: "desc", per_page: 100
+            }, (r, done) => {
+              if (r.data.every(p => new Date(p.updated_at) < sinir)) done();
+              return r.data;
+            });
+            const mergeli = kapali.filter(
+              p => p.merged_at && new Date(p.merged_at) >= sinir);
+
+            // --- 2) Su an acik PR'lar -----------------------------------
+            const acik = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: "open", sort: "created",
+              direction: "asc", per_page: 100
+            });
+
+            // --- 3) Son 24 saatte kirmizi yanan kosular ------------------
+            // created filtresi API tarafinda uygulanir: bosa veri cekmeyiz.
+            const tarih = sinir.toISOString().slice(0, 10);
+            const kirmizi = [];
+            for (const durum of ["failure", "timed_out", "cancelled"]) {
+              const r = await github.rest.actions.listWorkflowRunsForRepo({
+                owner, repo, status: durum, created: `>=${tarih}`,
+                per_page: 100
+              });
+              kirmizi.push(...r.data.workflow_runs.filter(
+                k => new Date(k.created_at) >= sinir));
+            }
+            kirmizi.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            // --- Raporu kur ---------------------------------------------
+            const L = [];
+            L.push(`Son ${SAAT} saat: ${gun(sinir)} - ${gun(new Date())} (UTC)`, "");
+
+            L.push(`## Merge edilen PR'lar (${mergeli.length})`, "");
+            if (!mergeli.length) {
+              L.push("_Yok._");
+            } else {
+              for (const p of mergeli) {
+                L.push(`- #${p.number} ${p.title} — ${p.user.login}, ${gun(p.merged_at)}`);
+              }
+            }
+            L.push("");
+
+            L.push(`## Acik PR'lar (${acik.length})`, "");
+            if (!acik.length) {
+              L.push("_Yok._");
+            } else {
+              for (const p of acik) {
+                const etiket = [
+                  p.draft ? "taslak" : null,
+                  `${yas(p.created_at)} once acildi`,
+                  `son hareket ${yas(p.updated_at)} once`
+                ].filter(Boolean).join(", ");
+                L.push(`- #${p.number} ${p.title} — ${p.user.login} (${etiket})`);
+              }
+            }
+            L.push("");
+
+            L.push(`## Kirmizi yanan kosular (${kirmizi.length})`, "");
+            if (!kirmizi.length) {
+              L.push("_Yok — tum kosular yesil._");
+            } else {
+              for (const k of kirmizi) {
+                L.push(`- **${k.name}** (${k.conclusion}) — ${k.event}, `
+                     + `${k.head_branch}, ${gun(k.created_at)} — [kosu](${k.html_url})`);
+              }
+            }
+            L.push("", "---",
+                   `_Bu brifing ${context.eventName} olayiyla uretildi. `
+                 + `[Kosu](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId})_`);
+
+            const govde = L.join("\n");
+
+            // Kosu ozetine de yaz: issue acilmasa bile sonuc gorunur olsun
+            await core.summary.addRaw(govde).write();
+
+            // Brifing HER SABAH acilir (bulguya bagli degil): "dun ne oldu"
+            // sorusunun cevabi, kotu haber olmasa da bir yere dusmeli.
+            const issue = await github.rest.issues.create({
+              owner, repo,
+              title: `Sabah brifingi - ${new Date().toISOString().slice(0, 10)}`,
+              body: govde,
+              labels: ["brifing"]
+            });
+            core.info(`issue acildi: ${issue.data.html_url}`);
