@@ -1,0 +1,164 @@
+# Bagimlilik taramasi — bilinen guvenlik aciklarini arar.
+#
+# NEDEN CRON? Bulgular BIZIM kodumuz degisince degil, DIS DUNYADA yeni
+# acik yayinlaninca ortaya cikar. PR'da kossaydi: hic PR acilmayan bir
+# haftada acik gozden kacardi, her PR'da ayni bulgu tekrar tekrar
+# raporlanirdi ve ilgisiz bir PR bizim yuzumuzden degil, baskasinin
+# yayinladigi acik yuzunden kirmizi yanardi.
+#
+# Tarama, paket yoneticisinin KENDI denetim komutunu kullanir:
+#   npm            -> npm audit
+#   Python (pip)   -> pip-audit (PyPA araci, OSV/PyPI danisma veritabani)
+# Harici bir SaaS servisi, hesap ya da token gerekmez.
+name: bagimlilik-taramasi
+
+on:
+  schedule:
+    # UTC! Yerel saat DEGIL. Turkiye UTC+3 (yaz saati yok):
+    # yerel 04:00 = 01:00 UTC. Denetim workflow'u ile ayni dakikaya
+    # denk gelmesin diye bir saat sonraya alindi.
+    - cron: "0 1 * * *"
+  workflow_dispatch:      # elle test
+
+concurrency:
+  group: bagimlilik-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read          # checkout icin
+  issues: write           # bulgu varsa issue acmak icin
+
+jobs:
+  tarama:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+
+      # Hangi paket yoneticisi var? Tarama buna gore sekillenir.
+      - name: Bagimlilik dosyalarini bul
+        id: tespit
+        run: |
+          set -euo pipefail
+          npm_var=false; pip_var=false
+          [ -f package.json ] && npm_var=true
+          for f in requirements.txt requirements-dev.txt pyproject.toml; do
+            [ -f "$f" ] && pip_var=true
+          done
+          echo "npm=$npm_var"  >> "$GITHUB_OUTPUT"
+          echo "pip=$pip_var"  >> "$GITHUB_OUTPUT"
+          echo "npm: $npm_var | pip: $pip_var"
+
+      - name: Node kur
+        if: steps.tespit.outputs.npm == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: npm audit
+        if: steps.tespit.outputs.npm == 'true'
+        run: |
+          set -euo pipefail
+          # audit kilit dosyasi ister; yoksa yalniz kilit uret (kurulum yok)
+          [ -f package-lock.json ] || npm install --package-lock-only
+          # Bulgu varsa npm audit sifir disi doner; kosuyu BURADA kesmiyoruz
+          npm audit --json > npm-audit.json || true
+
+      - name: pip-audit
+        if: steps.tespit.outputs.pip == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pip-audit
+          hedef=""
+          [ -f requirements.txt ] && hedef="-r requirements.txt"
+          [ -f pyproject.toml ] && [ -z "$hedef" ] && hedef="."
+          pip-audit $hedef --format json --output pip-audit.json || true
+
+      # Iki aracin cikti bicimi farkli; tek bir rapora indiriyoruz.
+      - name: Raporu uret
+        id: rapor
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+
+          satir, toplam = [], 0
+
+          def oku(yol):
+              p = pathlib.Path(yol)
+              if not p.exists() or not p.stat().st_size:
+                  return None
+              try:
+                  return json.loads(p.read_text(encoding="utf-8"))
+              except json.JSONDecodeError:
+                  return None
+
+          npm = oku("npm-audit.json")
+          if npm:
+              for ad, v in (npm.get("vulnerabilities") or {}).items():
+                  if isinstance(v, dict) and v.get("severity") in (
+                          "low", "moderate", "high", "critical"):
+                      toplam += 1
+                      satir.append(f"| npm | `{ad}` | {v['severity']} | "
+                                   f"{v.get('range', '-')} |")
+
+          pip = oku("pip-audit.json")
+          if pip:
+              for d in (pip.get("dependencies") or []):
+                  for a in (d.get("vulns") or []):
+                      toplam += 1
+                      duzeltme = ", ".join(a.get("fix_versions") or []) or "-"
+                      satir.append(f"| pip | `{d.get('name')} "
+                                   f"{d.get('version')}` | {a.get('id')} | "
+                                   f"{duzeltme} |")
+
+          L = ["## Bagimlilik taramasi", ""]
+          if not (npm or pip):
+              # Sessiz kalmiyoruz: taranacak bir sey olmadigini da yaziyoruz.
+              L += ["**Taranacak bagimlilik dosyasi yok.** Proje yalniz "
+                    "standart kutuphaneyi kullaniyor; npm ya da pip "
+                    "manifest dosyasi eklendiginde tarama kendiliginden "
+                    "devreye girer."]
+          elif toplam == 0:
+              L += ["**Temiz.** Bilinen acik bulunmadi."]
+          else:
+              L += [f"**{toplam} bulgu.**", "",
+                    "| Yonetici | Paket | Siddet / ID | Duzeltme |",
+                    "|---|---|---|---|"] + satir
+          L += ["", f"_Kosu: {os.environ.get('KOSU_URL', '-')}_"]
+
+          pathlib.Path("bagimlilik-rapor.md").write_text(
+              "\n".join(L) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"bulgu={toplam}\n")
+          print("\n".join(L))
+          PY
+        env:
+          KOSU_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Bulgu YOKSA da sessiz kalmiyoruz: kosu ozetine "temiz" notu duser.
+      - name: Ozete yaz (her durumda)
+        run: cat bagimlilik-rapor.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Bulgu VARSA issue ac (cron'da PR yok, yorum yazacak yer yok).
+      - name: Bulgu varsa issue ac
+        if: steps.rapor.outputs.bulgu != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Bagimlilik taramasi: ${{ steps.rapor.outputs.bulgu }} bulgu - ${new Date().toISOString().slice(0, 10)}`,
+              body: fs.readFileSync('bagimlilik-rapor.md', 'utf8'),
+              labels: ['bagimlilik']
+            });
+
+      # Bulgu varsa kosu KIRMIZI yansin — issue YAZILDIKTAN SONRA.
+      - name: Bulgu varsa basarisiz ol
+        if: steps.rapor.outputs.bulgu != '0'
+        run: |
+          echo "${{ steps.rapor.outputs.bulgu }} bagimlilik bulgusu var." >&2
+          exit 1
