@@ -1,0 +1,21 @@
+# Action surum takibi.
+#
+# NEDEN VAR? Workflow'larda actions/checkout@v4 gibi ETIKET kullaniyoruz.
+# Etiket hareketli bir hedeftir: GitHub bir gun altindaki Node surumunu
+# degistirir ve kosuda "deprecated" uyarisi cikar (bugun github-script@v7
+# icin oldugu gibi). Bunu izleyen bir sey olmazsa, bir gun hepsi birden
+# kirilir. Dependabot yeni ana surum cikinca PR acar; PR denetim
+# kapisindan gecer, biz de kontrollu sekilde yukseltiriz.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"                 # .github/workflows tumu
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Europe/Istanbul    # burada YEREL saat gecerli (cron'un tersi)
+    open-pull-requests-limit: 3    # gurultu freni
+    commit-message:
+      prefix: "CI"
+    labels: ["bagimlilik"]
