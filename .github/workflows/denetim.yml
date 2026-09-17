@@ -1,0 +1,146 @@
+# Otomatik denetim hatti — MOCK mod (SIFIR API maliyeti).
+# Gercek model cagrisi YOK: otomasyon/denetim_mock.py deterministik
+# kurallarla tarar. Bu yuzden hicbir secret'a ihtiyac duyulmaz.
+name: denetim
+
+# UC TETIKLEYICI, UC AYRI IS:
+#   pull_request -> KAPI        : kod main'e GIRMEDEN once denetlenir,
+#                                 sonuc PR yorumu olarak yazilir
+#   push (main)  -> GUVENLIK AGI: PR acmadan dogrudan main'e push edilirse
+#                                 de denetlenir, sonuc ISSUE olarak acilir
+#   workflow_dispatch -> ELLE   : Actions sekmesinden test kosusu
+on:
+  pull_request:
+    types: [opened, synchronize]   # PR acilinca ve her yeni push'ta
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Ayni dal icin tek kosu: yeni push gelince eskisi iptal olsun
+# (bosa gecen dakika harcanmasin, sonuclar karismasin)
+concurrency:
+  group: denetim-${{ github.ref }}
+  cancel-in-progress: true
+
+# En az ayricalik ilkesi. Burada ILAN etmezsek varsayilan salt-okunur
+# token yaziyla ilgili API cagrilarinda 403 doner.
+permissions:
+  contents: read          # depoyu checkout etmek icin
+  pull-requests: write    # PR'a yorum yazmak icin
+  issues: write           # ISSUE acmak icin (yorum degil, olusturma hakki)
+
+jobs:
+  denetim:
+    runs-on: ubuntu-latest    # Linux: ucretsiz dakika carpani 1x
+    timeout-minutes: 10       # asili kalirsa BASARISIZ olsun (bosa dakika yakma)
+
+    steps:
+      # 1) Depoyu al -----------------------------------------------------
+      - name: Depoyu al
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # diff icin gecmis gerekir (sig klon yetmez)
+
+      # 2) Kapsami belirle (olaya gore) ----------------------------------
+      - name: Kapsami belirle
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR: yalniz DEGISEN dosyalar — ucuz ve odakli
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > kapsam.txt
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # push: son commit'te degisenler (ilk commit ise tum dosyalar)
+            git diff --name-only HEAD~1 HEAD > kapsam.txt 2>/dev/null \
+              || git ls-files > kapsam.txt
+          else
+            # elle tetikleme: tum dosyalar
+            git ls-files > kapsam.txt
+          fi
+          echo "--- kapsam ---"; cat kapsam.txt
+          echo "dosya sayisi: $(wc -l < kapsam.txt)"
+
+      # 3) Denetimi kostur (MOCK) ----------------------------------------
+      #    Betik yuksek etkili bulgu bulursa exit 1 doner. continue-on-error
+      #    ile kosuyu BURADA kesmiyoruz ki rapor yine de yazilabilsin;
+      #    kirmizi yakma isini en sondaki adim yapar (adim 6).
+      - name: Denetimi kostur (MOCK)
+        id: mock
+        continue-on-error: true
+        run: python3 otomasyon/denetim_mock.py kapsam.txt rapor.md sonuc.json
+
+      # 4) Dogrulama kapisi ----------------------------------------------
+      #    "Adim yesil yandi" yetmez; CIKTININ ICINE bakariz. Rapor bossa
+      #    denetim gercekte kosmamistir -> kosuyu burada BASARISIZ yap.
+      - name: Sonucu dogrula
+        id: dogrula
+        run: |
+          set -euo pipefail
+          test -s rapor.md || { echo "HATA: rapor bos - denetim gercekte kosmadi" >&2; exit 1; }
+          test -s sonuc.json || { echo "HATA: sonuc.json bos" >&2; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          d = json.load(open("sonuc.json", encoding="utf-8"))
+          print("ozet:", d)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"yuksek={int(d.get('yuksek', 0) or 0)}\n")
+              f.write(f"durum={d.get('durum', 'bilinmiyor')}\n")
+          PY
+
+      # 5a) PR olayinda: sonucu PR YORUMU olarak yaz ----------------------
+      - name: PR'a yorum yaz
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('rapor.md', 'utf8')
+            });
+
+      # 5b) push / elle: PR yok, yorum yazilacak yer yok -> ISSUE ac ------
+      #     Gurultuyu azaltmak icin yalniz BULGU VARSA issue aciyoruz.
+      - name: Issue ac
+        if: github.event_name != 'pull_request' && steps.dogrula.outputs.yuksek != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Denetim (${context.eventName}) - ${new Date().toISOString().slice(0, 10)}`,
+              body: fs.readFileSync('rapor.md', 'utf8')
+                  + `\n\n---\nKosu: ${context.serverUrl}/${context.repo.owner}/`
+                  + `${context.repo.repo}/actions/runs/${context.runId}`
+            });
+
+      # 6) KAPI: yuksek etkili bulgu varsa kosu KIRMIZI yansin ------------
+      #    Rapor YAZILDIKTAN SONRA calisir; once bilgi verilir, sonra bloklanir.
+      - name: Yuksek etkili bulgu varsa basarisiz ol
+        if: steps.dogrula.outputs.yuksek != '0'
+        run: |
+          echo "Yuksek etkili ${{ steps.dogrula.outputs.yuksek }} bulgu var." >&2
+          exit 1
+
+      # 7) Basarisizlikta log'a not dus -----------------------------------
+      - name: Basarisizlik notu
+        if: failure()
+        run: |
+          {
+            echo "### Denetim BASARISIZ"
+            echo "- olay: ${{ github.event_name }} / dal: ${{ github.ref_name }}"
+            echo "- denetim adimi cikis kodu: ${{ steps.mock.outcome }}"
+            echo "- yuksek etkili bulgu: ${{ steps.dogrula.outputs.yuksek || 'okunamadi' }}"
+            echo "- Bulgu yoksa: betik hic kosmadi ya da rapor bos uretildi."
+            echo ""
+            echo "Uretilen rapor (varsa):"
+            echo ""
+            if [ -s rapor.md ]; then cat rapor.md; else echo "_rapor.md bos ya da yok_"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+# NOT: Kirmizi check tek basina merge'i ENGELLEMEZ. Gercek engelleme icin
+# depo ayarlarindan branch protection acilip bu denetim "required status
+# check" yapilmalidir. O ayar olmadan CI "cok hizli uyaran bir cron"dur.
