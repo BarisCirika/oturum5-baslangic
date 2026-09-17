@@ -7,13 +7,21 @@ name: denetim
 #   pull_request -> KAPI        : kod main'e GIRMEDEN once denetlenir,
 #                                 sonuc PR yorumu olarak yazilir
 #   push (main)  -> GUVENLIK AGI: PR acmadan dogrudan main'e push edilirse
-#                                 de denetlenir, sonuc ISSUE olarak acilir
-#   workflow_dispatch -> ELLE   : Actions sekmesinden test kosusu
+#                                 de denetlenir, BULGU VARSA issue acilir
+#   schedule     -> GECE TARAMASI: her gece tum depoyu tarar, sonucu
+#                                 ISSUE olarak acar (cron'da PR yoktur)
+#   workflow_dispatch -> ELLE   : Actions sekmesinden test kosusu;
+#                                 gece taramasiyla ayni yolu izler
 on:
   pull_request:
     types: [opened, synchronize]   # PR acilinca ve her yeni push'ta
   push:
     branches: [main]
+  schedule:
+    # UTC! Yerel saat DEGIL. Turkiye UTC+3 ve yaz saati uygulamiyor,
+    # bu yuzden yerel 03:00 = 00:00 UTC. Gece taramasi tum depoyu
+    # tarar ve sonucu ISSUE olarak acar (cron'da PR yoktur).
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 # Ayni dal icin tek kosu: yeni push gelince eskisi iptal olsun
@@ -100,10 +108,15 @@ jobs:
               body: fs.readFileSync('rapor.md', 'utf8')
             });
 
-      # 5b) push / elle: PR yok, yorum yazilacak yer yok -> ISSUE ac ------
-      #     Gurultuyu azaltmak icin yalniz BULGU VARSA issue aciyoruz.
+      # 5b) cron / push / elle: PR yok, yorum yazilacak yer yok -> ISSUE ac
+      #     schedule ve elle kosuda RAPOR HER ZAMAN issue olur (gece
+      #     taramasinin ciktisi bir yere dusmeli). push'ta ise gurultuyu
+      #     azaltmak icin yalniz YUKSEK bulgu varsa issue aciliyor.
       - name: Issue ac
-        if: github.event_name != 'pull_request' && steps.dogrula.outputs.yuksek != '0'
+        if: >-
+          github.event_name == 'schedule'
+          || github.event_name == 'workflow_dispatch'
+          || (github.event_name == 'push' && steps.dogrula.outputs.yuksek != '0')
         uses: actions/github-script@v7
         with:
           script: |
