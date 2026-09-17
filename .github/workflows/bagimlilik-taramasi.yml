@@ -149,7 +149,7 @@ jobs:
       # Bulgu VARSA issue ac (cron'da PR yok, yorum yazacak yer yok).
       - name: Bulgu varsa issue ac
         if: steps.rapor.outputs.bulgu != '0'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
