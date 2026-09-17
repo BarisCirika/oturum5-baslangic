@@ -177,7 +177,8 @@ dal="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo bi
 durum="tamam"; [ "$py_kod" -eq 3 ] && durum="butce-asimi"
 [ "$py_kod" -eq 0 ] || [ "$py_kod" -eq 3 ] || durum="hata"
 
-"$PY_BIN" - "$maliyet" <<'PY2' | tr -d '' | while IFS=$'	' read -r ajan sid usd; do
+"$PY_BIN" - "$maliyet" <<'PY2' | tr -d '
+' | while IFS=$'	' read -r ajan sid usd; do
 import json, sys
 # Windows'ta stdout metin kipinde \n -> \r\n cevirir ve bu \r defterdeki
 # JSON degerinin icine sizar. Satir sonunu burada sabitliyoruz; CI'daki
