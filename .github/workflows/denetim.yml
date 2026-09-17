@@ -123,6 +123,33 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # 3c) KOSU KAYIT DEFTERI --------------------------------------------
+      #     ajanlari-kostur.sh her ajan icin otomasyon/kosular.jsonl'e bir
+      #     satir ekledi. Runner'daki dosya kosu bitince kaybolur ve main
+      #     korumali oldugu icin CI kendi kendine commit EDEMEZ; bu yuzden
+      #     defteri ARTIFACT olarak sakliyoruz (14 gun).
+      - name: Defteri ozete yaz
+        if: always()
+        run: |
+          {
+            echo "### Kosu defteri (son 5 satir)"
+            echo ""
+            echo '```json'
+            tail -5 otomasyon/kosular.jsonl 2>/dev/null || echo "(defter bos)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Defteri artifact olarak yukle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosu-defteri-${{ github.run_id }}
+          path: |
+            otomasyon/kosular.jsonl
+            maliyet.json
+          retention-days: 14
+          if-no-files-found: warn
+
       # 4) Dogrulama kapisi ----------------------------------------------
       #    "Adim yesil yandi" yetmez; CIKTININ ICINE bakariz. Rapor bossa
       #    denetim gercekte kosmamistir -> kosuyu burada BASARISIZ yap.

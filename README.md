@@ -41,7 +41,9 @@ envanter.py             Ajanın özetleyeceği örnek kaynak dosyalar
 savas.py                (bilerek küçük ve okunur tutuldu)
 kayit.py
 YER-HARITASI.md         Hangi ayar nerede yapılır (İLK BAKILACAK YER)
-otomasyon/kosular.jsonl Koşu kayıt defteri (başta boş)
+otomasyon/kosular.jsonl Koşu kayıt defteri (ajan koşusu başına bir satır)
+otomasyon/kosu-kaydet.sh  Deftere satır ekleyen betik (ajanlari-kostur.sh
+                        bunu otomatik çağırır)
 otomasyon/kabul-kriteri.md  Best-of-N için kriter şablonu (koşudan ÖNCE
                         doldurulur)
 .claude/alan.txt        Alan kilidi için izinli klasör öneki (örnek: docs/)

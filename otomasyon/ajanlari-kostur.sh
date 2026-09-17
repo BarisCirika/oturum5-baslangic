@@ -83,6 +83,7 @@ if [ "$mod" = "GERCEK" ]; then
 fi
 
 # --- Raporu ve maliyet ozetini uret ---------------------------------------
+set +e
 AJAN_BUTCE="$ajan_butce" AJAN_SURE="$ajan_sure" TOPLAM_BUTCE="$toplam_butce" \
 AJAN_TUR="$ajan_tur" \
 "$PY_BIN" - "$rapor" "$maliyet" "$mod" "$kosu" "${ajanlar[@]}" <<'PY'
@@ -165,3 +166,29 @@ print(json.dumps({"mod": mod, "toplam_usd": round(toplam, 6),
 # Butce asildiysa cikis kodu 3: cagiran taraf kosuyu KIRMIZI yakar.
 sys.exit(3 if asti else 0)
 PY
+py_kod=$?
+set -e
+
+# --- KOSU KAYIT DEFTERI ----------------------------------------------------
+# Her ajan icin otomasyon/kosular.jsonl'e TEK SATIR. Defter, maliyet.json'dan
+# beslenir; boylece MOCK kosular da (0 USD) kayda girer ve "ne zaman ne
+# kostu" sorusu sonradan cevaplanabilir.
+dal="${GITHUB_REF_NAME:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo bilinmiyor)}"
+durum="tamam"; [ "$py_kod" -eq 3 ] && durum="butce-asimi"
+[ "$py_kod" -eq 0 ] || [ "$py_kod" -eq 3 ] || durum="hata"
+
+"$PY_BIN" - "$maliyet" <<'PY2' | tr -d '' | while IFS=$'	' read -r ajan sid usd; do
+import json, sys
+# Windows'ta stdout metin kipinde \n -> \r\n cevirir ve bu \r defterdeki
+# JSON degerinin icine sizar. Satir sonunu burada sabitliyoruz; CI'daki
+# Linux runner'da zaten sorun yoktu, hatayi yerel kosuda yakaladik.
+sys.stdout.reconfigure(newline="\n")
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+for a in d.get("ajanlar", []):
+    print("	".join([a["ajan"], a.get("oturum") or "-", str(a["maliyet_usd"])]))
+PY2
+  bash otomasyon/kosu-kaydet.sh "$ajan" "$dal" "denetim/$mod" "$sid" "$usd" "$durum" >/dev/null
+done
+
+echo "defter: $(wc -l < "${KAYIT_DOSYA:-otomasyon/kosular.jsonl}") satir"
+exit "$py_kod"
