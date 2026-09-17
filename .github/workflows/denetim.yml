@@ -93,7 +93,7 @@ jobs:
       #       - kosu basina TOPLAM butce; asilirsa cikis kodu 3 -> KIRMIZI
       - name: Claude Code kur (yalniz GERCEK mod)
         if: vars.DENETIM_MOD == 'GERCEK'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
 
