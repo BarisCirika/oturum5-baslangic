@@ -79,79 +79,49 @@ jobs:
         continue-on-error: true
         run: python3 otomasyon/denetim_mock.py kapsam.txt rapor.md sonuc.json
 
-      # 3b) MODEL DENETIMI — "claude --bare" (DANISMAN gorevi) ------------
-      #     Deterministik kural KAPI'dir, model DANISMAN'dir: muhakeme
-      #     gerektiren bulgular icin. CI'da model cagrisi PARA HARCAR, bu
-      #     yuzden varsayilan olarak KAPALI gelir. Acmak icin iki sey
-      #     birlikte gerekir: repo degiskeni DENETIM_MOD=GERCEK ve
-      #     ANTHROPIC_API_KEY secret'i.
+      # 3b) COK AJANLI MODEL DENETIMI (DANISMAN gorevi) ------------------
+      #     Uc ajan, uc ayri rol, uc ayri session id:
+      #       guvenlik / kalite / tutarlilik
+      #     Deterministik kural KAPI'dir, ajanlar DANISMAN'dir.
       #
-      #     NEDEN --bare? CI'da keychain, OAuth oturumu ve yerel hook'lar
-      #     yoktur. --bare bunlarin hepsini atlar (hooks, LSP, plugin sync,
-      #     attribution, auto-memory, CLAUDE.md okuma) ve kimligi YALNIZ
-      #     ANTHROPIC_API_KEY'den alir. Yani abonelik ile kosmaz; anahtar
-      #     olmadan "Not logged in" der.
-      - name: Model denetimi (MOCK - komut yazdirilir, model CAGRILMAZ)
-        if: vars.DENETIM_MOD != 'GERCEK'
-        env:
-          ANAHTAR_VAR: ${{ secrets.ANTHROPIC_API_KEY != '' }}
-        run: |
-          set -euo pipefail
-          {
-            echo "### Model denetimi: MOCK (sifir maliyet)"
-            echo ""
-            echo "Model CAGRILMADI. Gercek modda kosacak komut:"
-            echo ""
-            echo '```bash'
-            echo 'claude --bare -p "$(cat otomasyon/model-istem.txt)" \'
-            echo '  --output-format json \'
-            echo '  --allowedTools "Read,Grep,Glob" \'
-            echo '  --max-turns 12 \'
-            echo '  --permission-mode plan'
-            echo '```'
-            echo ""
-            echo "| Kapi | Durum |"
-            echo "|---|---|"
-            echo "| Repo degiskeni DENETIM_MOD=GERCEK | ${{ vars.DENETIM_MOD == 'GERCEK' }} |"
-            echo "| ANTHROPIC_API_KEY secret'i tanimli | ${ANAHTAR_VAR} |"
-            echo ""
-            echo "Ikisi birlikte saglanmadan model adimi hic kosmaz."
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "MOCK: model cagrilmadi, komut ozete yazildi."
-
+      #     VARSAYILAN MOCK: model cagrilmaz, maliyet 0. Gercek mod icin
+      #     hem vars.DENETIM_MOD=GERCEK hem ANTHROPIC_API_KEY gerekir.
+      #
+      #     FRENLER (otomasyon/ajanlari-kostur.sh icinde):
+      #       - ajan basi --max-budget-usd ve timeout
+      #       - ajan basi --max-turns, --permission-mode plan (yazma yok)
+      #       - kosu basina TOPLAM butce; asilirsa cikis kodu 3 -> KIRMIZI
       - name: Claude Code kur (yalniz GERCEK mod)
         if: vars.DENETIM_MOD == 'GERCEK'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Model denetimi (GERCEK - PARA HARCAR)
+      - name: Claude Code yukle (yalniz GERCEK mod)
         if: vars.DENETIM_MOD == 'GERCEK'
-        continue-on-error: true       # model catlarsa kural raporu yine yazilsin
-        timeout-minutes: 5            # agdaki takilma is butcesini yemesin
+        timeout-minutes: 3
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Model ajanlari
+        id: ajanlar
+        continue-on-error: true       # rapor yazilsin; kirmiziyi son adim yakar
+        timeout-minutes: 8
         env:
+          DENETIM_MOD: ${{ vars.DENETIM_MOD || 'MOCK' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GIT_TERMINAL_PROMPT: "0"    # kimlik sorusu yerine hata
+          AJAN_BUTCE: ${{ vars.AJAN_BUTCE || '0.50' }}
+          AJAN_SURE: ${{ vars.AJAN_SURE || '300' }}
+          TOPLAM_BUTCE: ${{ vars.TOPLAM_BUTCE || '1.50' }}
+          AJAN_TUR: ${{ vars.AJAN_TUR || '12' }}
         run: |
-          set -euo pipefail
-          test -n "${ANTHROPIC_API_KEY:-}" || {
-            echo "GERCEK mod istendi ama ANTHROPIC_API_KEY yok." >&2; exit 1; }
-          npm install -g @anthropic-ai/claude-code
-          claude --bare -p "$(cat otomasyon/model-istem.txt)" \
-            --output-format json \
-            --allowedTools "Read,Grep,Glob" \
-            --max-turns 12 \
-            --permission-mode plan \
-            > model-ham.json
-          python3 - <<'PY'
-          import json, pathlib
-          d = json.loads(pathlib.Path("model-ham.json").read_text(encoding="utf-8"))
-          metin = (d.get("result") or "").strip()
-          with open("rapor.md", "a", encoding="utf-8") as f:
-              f.write("\n\n## Model denetimi (danisman gorusu)\n\n")
-              f.write(metin or "_Model bos yanit dondu._")
-              f.write(f"\n\n_Maliyet: {d.get('total_cost_usd', 0)} USD_\n")
-          PY
+          bash otomasyon/ajanlari-kostur.sh kapsam.txt rapor.md maliyet.json
+          {
+            echo "### Model ajanlari (${DENETIM_MOD})"
+            echo ""
+            echo '```json'
+            cat maliyet.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 4) Dogrulama kapisi ----------------------------------------------
       #    "Adim yesil yandi" yetmez; CIKTININ ICINE bakariz. Rapor bossa
@@ -213,6 +183,15 @@ jobs:
         if: steps.dogrula.outputs.yuksek != '0'
         run: |
           echo "Yuksek etkili ${{ steps.dogrula.outputs.yuksek }} bulgu var." >&2
+          exit 1
+
+      # Ajan adimi butce asiminda cikis kodu 3 doner (continue-on-error ile
+      # yutuldu). Rapor yazildiktan SONRA burada kirmizi yakiyoruz.
+      - name: Ajan butcesi asildiysa basarisiz ol
+        if: steps.ajanlar.outcome == 'failure'
+        run: |
+          echo "Model ajanlari adimi basarisiz (butce asimi ya da hata)." >&2
+          cat maliyet.json 2>/dev/null || true
           exit 1
 
       # 7) Basarisizlikta log'a not dus -----------------------------------

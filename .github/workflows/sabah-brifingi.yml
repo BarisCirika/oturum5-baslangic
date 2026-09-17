@@ -75,6 +75,51 @@ jobs:
             }
             kirmizi.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
+            // --- 4) Maliyet: model ajanlari + CI dakikalari --------------
+            // Model maliyeti, denetim raporunun sonuna dusen makine-okur
+            // satirlardan toplanir:
+            //   <!-- maliyet ajan=X mod=Y usd=Z oturum=... kosu=... -->
+            // Boylece ayri bir veritabani ya da depoya commit gerekmez;
+            // kaynak, zaten acik olan PR yorumu / issue govdesidir.
+            const since = sinir.toISOString();
+            const govdeler = [];
+            const yorumlar = await github.paginate(
+              github.rest.issues.listCommentsForRepo,
+              { owner, repo, since, per_page: 100 });
+            govdeler.push(...yorumlar.map(y => y.body || ""));
+            const issuelar = await github.paginate(github.rest.issues.listForRepo,
+              { owner, repo, state: "all", since, per_page: 100 });
+            govdeler.push(...issuelar.map(i => i.body || ""));
+
+            const desen = /<!--\s*maliyet\s+ajan=(\S+)\s+mod=(\S+)\s+usd=([0-9.]+)\s+oturum=(\S+)\s+kosu=(\S+)\s*-->/g;
+            const ajanToplam = {}; const oturumlar = new Set();
+            let modelUsd = 0, kayitSayisi = 0, mockSayisi = 0;
+            for (const g of govdeler) {
+              for (const m of g.matchAll(desen)) {
+                const [, ajan, mod, usd, oturum] = m;
+                const d = parseFloat(usd) || 0;
+                modelUsd += d; kayitSayisi++;
+                if (mod !== "GERCEK") mockSayisi++;
+                ajanToplam[ajan] = (ajanToplam[ajan] || 0) + d;
+                if (oturum && oturum !== "-") oturumlar.add(oturum);
+              }
+            }
+
+            // CI dakikalari: son 24 saatteki TUM kosularin suresi.
+            const tumKosular = await github.paginate(
+              github.rest.actions.listWorkflowRunsForRepo,
+              { owner, repo, created: `>=${tarih}`, per_page: 100 },
+              (r) => r.data.workflow_runs);
+            const sonKosular = tumKosular.filter(
+              k => new Date(k.created_at) >= sinir);
+            let saniye = 0;
+            for (const k of sonKosular) {
+              const bas = new Date(k.run_started_at || k.created_at);
+              const bit = new Date(k.updated_at);
+              if (bit > bas) saniye += (bit - bas) / 1000;
+            }
+            const dakika = Math.round(saniye / 6) / 10;
+
             // --- Raporu kur ---------------------------------------------
             const L = [];
             L.push(`Son ${SAAT} saat: ${gun(sinir)} - ${gun(new Date())} (UTC)`, "");
@@ -113,6 +158,29 @@ jobs:
                      + `${k.head_branch}, ${gun(k.created_at)} — [kosu](${k.html_url})`);
               }
             }
+            L.push(`## Maliyet`, "");
+            L.push("| Kalem | Deger |", "|---|---|");
+            L.push(`| Model maliyeti (son 24s) | **${modelUsd.toFixed(4)} USD** |`);
+            L.push(`| Ajan kaydi | ${kayitSayisi} (${mockSayisi} tanesi MOCK) |`);
+            L.push(`| Ayri oturum (session id) | ${oturumlar.size} |`);
+            L.push(`| CI kosusu | ${sonKosular.length} |`);
+            L.push(`| CI suresi | ${dakika} dakika (public repo: ucretsiz) |`);
+            L.push("");
+            const ajanAdlari = Object.keys(ajanToplam).sort();
+            if (ajanAdlari.length) {
+              L.push("Ajan kirilimi:", "");
+              for (const a of ajanAdlari) {
+                L.push(`- ${a}: ${ajanToplam[a].toFixed(4)} USD`);
+              }
+              L.push("");
+            } else {
+              L.push("_Son 24 saatte ajan kaydi yok._", "");
+            }
+            if (modelUsd === 0) {
+              L.push("_Model maliyeti 0: denetim MOCK modda kosuyor, "
+                   + "model cagrilmiyor._", "");
+            }
+
             L.push("", "---",
                    `_Bu brifing ${context.eventName} olayiyla uretildi. `
                  + `[Kosu](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId})_`);
