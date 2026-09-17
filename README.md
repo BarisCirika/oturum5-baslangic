@@ -147,3 +147,4 @@ Beklenen: bulgu tablosu + "Önce neyi düzelt" listesi + JSON özet.
 - Runner dakikaları GitHub'a, model kullanımı Anthropic API anahtarına
   faturalanır — **iki ayrı kalem**; `--max-budget-usd` yalnız ikincisini
   keser.
+BU SATIR YANLIS - DENEY
