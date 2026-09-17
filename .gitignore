@@ -7,3 +7,8 @@ node_modules/
 otomasyon/son-kosu.json*
 .DS_Store
 !.env.example
+
+# /denetim ciktilari
+kapsam.txt
+rapor.md
+sonuc.json
