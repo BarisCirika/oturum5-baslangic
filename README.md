@@ -56,9 +56,10 @@ ornek-cozum/            REFERANS ÇÖZÜMLER — önce kendin yazdır, sonra bak
                         dosyalara yazmayı exit 2 ile keser
   denetim.yml           A7: PR'da otomatik denetim + gece issue'su
                         (VARSAYILAN: MOCK — sıfır API maliyeti)
-otomasyon/denetim_mock.py  Deterministik denetim (gömülü sır, shell=True,
-                        bare except, SQL birleştirme, http, TODO + HTML
-                        SEO kontrolleri). CI'da bunu koşuyoruz.
+otomasyon/denetim_mock.py  Deterministik denetim (gömülü sır, kabuk
+                        çağrısı, yutulan hata, SQL birleştirme, şifresiz
+                        http, iş notu + HTML SEO kontrolleri). CI'da
+                        bunu koşuyoruz.
 ```
 
 ## İki mod
@@ -142,10 +143,10 @@ Beklenen: bulgu tablosu + "Önce neyi düzelt" listesi + JSON özet.
 
 ## Notlar
 
-- Bu proje **git deposu değil**; Ders 12'nin worktree bölümü için Claude'a
-  `git init` yaptırıp bir GitHub deposuna bağlayabilirsin (ön koşul föyü).
-- `denetim.yml` çalışmadan önce depoya **`ANTHROPIC_API_KEY` secret'ı**
-  eklenmeli (GitHub → Settings → Secrets and variables → Actions).
+- Bu proje bir git deposudur ve GitHub'a bağlıdır; `main` dalı korumalıdır
+  (PR + geçen `denetim` check'i olmadan merge edilemez).
+- `denetim.yml` MOCK modda **hiçbir secret istemez.** `ANTHROPIC_API_KEY`
+  yalnız `DENETIM_MOD=GERCEK` için gerekir — ayrıntı: `otomasyon/AYARLAR.md`.
 - Runner dakikaları GitHub'a, model kullanımı Anthropic API anahtarına
   faturalanır — **iki ayrı kalem**; `--max-budget-usd` yalnız ikincisini
   keser.
