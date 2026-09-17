@@ -56,7 +56,7 @@
 | **kayıt defteri** | `otomasyon/kosular.jsonl` | ts, alan, dal, görev, session_id, maliyet_usd, durum |
 | **izin dosyası** | `.claude/settings.json` | `permissions.deny/ask`, `hooks`, `defaultMode` |
 | **alan kilidi** | `.claude/alan.txt` + `.claude/hooks/alan_kilidi.py` + `.claude/settings.local.json` | izinli klasör öneki, engelleme hook'u, hook bağlantısı (her worktree'de AYRI) |
-| **MOCK denetim** | `otomasyon/denetim_mock.py` | kural seti: gömülü sır, `shell=True`, bare except, SQL birleştirme, `http://`, SEO |
+| **MOCK denetim** | `otomasyon/denetim_mock.py` | kural seti: gömülü sır, kabuk çağrısı, yutulan hata, SQL birleştirme, şifresiz http, SEO |
 
 ---
 

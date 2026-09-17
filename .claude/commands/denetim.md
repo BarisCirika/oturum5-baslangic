@@ -1,5 +1,5 @@
 ---
-description: Commit/PR öncesi repo dosyalarını deterministik kurallarla (gömülü sır, eval/exec, shell=True, bare except, SQL birleştirme, http, TODO, HTML SEO) tarar ve raporu özetler. "Denetim yap", "güvenlik taraması", "PR'a hazır mı" gibi durumlarda kullan.
+description: Commit/PR öncesi repo dosyalarını deterministik kurallarla (gömülü sır, dinamik kod çalıştırma, kabuk çağrısı, yutulan hata, SQL birleştirme, şifresiz http, tamamlanmamış iş notu, HTML SEO) tarar ve raporu özetler. "Denetim yap", "güvenlik taraması", "PR'a hazır mı" gibi durumlarda kullan.
 argument-hint: "[dosya veya klasör yolu — boşsa tüm git dosyaları]"
 allowed-tools: Bash(git ls-files:*), Bash(git status:*), Bash(python otomasyon/denetim_mock.py:*), Bash(python3 otomasyon/denetim_mock.py:*), Read, Grep
 ---

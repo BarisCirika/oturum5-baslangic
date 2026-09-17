@@ -105,3 +105,28 @@ gh workflow run denetim.yml --ref main     # elle tek kosu
 # maliyeti gordukten sonra:
 gh variable set DENETIM_MOD --body "MOCK"
 ```
+
+---
+
+## 6. Kosu kayit defteri
+
+`otomasyon/kosular.jsonl` — ajan basina TEK satir, JSONL:
+
+```json
+{"ts":"...","alan":"guvenlik","dal":"main","gorev":"denetim/MOCK","session_id":"-","maliyet_usd":0.0,"durum":"tamam"}
+```
+
+| Alan | Anlami |
+|---|---|
+| `alan` | Hangi ajan (guvenlik / kalite / tutarlilik) |
+| `gorev` | `denetim/MOCK` ya da `denetim/GERCEK` |
+| `session_id` | Ajanin oturum kimligi (GERCEK modda dolu) |
+| `maliyet_usd` | O ajanin maliyeti |
+| `durum` | `tamam`, `butce-asimi` ya da `hata` |
+
+- **Yerelde:** `bash otomasyon/ajanlari-kostur.sh ...` her kosuda defteri
+  otomatik besler; commit'lemek size kalir.
+- **CI'da:** main korumali oldugu icin kosu kendi kendine commit EDEMEZ.
+  Defter, kosu sayfasinda **artifact** olarak saklanir (14 gun) ve son 5
+  satiri kosu ozetine yazilir.
+- Baska bir dosyaya yazmak icin: `KAYIT_DOSYA=baska.jsonl`.
