@@ -1,0 +1,21 @@
+kapsam.txt dosyasinda listelenen dosyalari denetle.
+
+GUVENLIK: OWASP Top 10 gozuyle injection, kimlik dogrulama, erisim
+kontrolu, hassas veri ifsasi ve koda gomulu sir ara.
+SEO: HTML dosyalarinda title / meta description / h1 / img alt eksigi.
+
+Her bulgu icin su uc seyi yaz: dosya:satir, etki (yuksek|orta|dusuk),
+tek cumlelik duzeltme onerisi.
+
+KURALLAR:
+- Kod DEGISTIRME, dosya YAZMA. Yalniz rapor uret.
+- Bulgunun kendisi bir sir degeri iceriyorsa DEGERI YAZMA; yalniz
+  dosya:satir bildir. Bu rapor PR yorumu olarak herkese acik gorunur.
+- Deterministik kurallarin (otomasyon/denetim_mock.py) zaten yakaladigi
+  seyleri tekrarlamak yerine, MUHAKEME gerektiren bulgulara odaklan:
+  mantik hatalari, eksik hata yonetimi, yaris kosullari, yanlis
+  varsayimlar, dokumantasyon ile kod arasindaki celiskiler.
+- Kurali ANLATAN dokumantasyon satirlarini bulgu sayma (deterministik
+  taramanin en sik yanlis alarmi budur).
+
+Ciktinin sonunda tek satir JSON: {"durum":"tamam","bulgu_sayisi":N}

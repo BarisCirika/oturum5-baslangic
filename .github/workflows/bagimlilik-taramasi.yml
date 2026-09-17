@@ -36,6 +36,9 @@ jobs:
     steps:
       - name: Depoyu al
         uses: actions/checkout@v4
+        with:
+          # Token'i git config'e YAZMA (okuma yetkisi yeterli).
+          persist-credentials: false
 
       # Hangi paket yoneticisi var? Tarama buna gore sekillenir.
       - name: Bagimlilik dosyalarini bul
@@ -58,15 +61,17 @@ jobs:
           node-version: "20"
 
       - name: npm audit
+        timeout-minutes: 5    # ag takilirsa is butcesini yemesin
         if: steps.tespit.outputs.npm == 'true'
         run: |
           set -euo pipefail
           # audit kilit dosyasi ister; yoksa yalniz kilit uret (kurulum yok)
-          [ -f package-lock.json ] || npm install --package-lock-only
+          [ -f package-lock.json ] || npm install --package-lock-only --ignore-scripts
           # Bulgu varsa npm audit sifir disi doner; kosuyu BURADA kesmiyoruz
           npm audit --json > npm-audit.json || true
 
       - name: pip-audit
+        timeout-minutes: 5    # ag takilirsa is butcesini yemesin
         if: steps.tespit.outputs.pip == 'true'
         run: |
           set -euo pipefail
