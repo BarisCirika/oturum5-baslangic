@@ -106,12 +106,14 @@ jobs:
             }
 
             // CI dakikalari: son 24 saatteki TUM kosularin suresi.
+            // paginate bu uc nokta icin diziyi kendisi cikarir; mapFn
+            // verirsek r.data zaten dizi olur ve .workflow_runs undefined
+            // doner (ilk denemede kosu bu yuzden kirmizi yandi).
             const tumKosular = await github.paginate(
               github.rest.actions.listWorkflowRunsForRepo,
-              { owner, repo, created: `>=${tarih}`, per_page: 100 },
-              (r) => r.data.workflow_runs);
+              { owner, repo, created: `>=${tarih}`, per_page: 100 });
             const sonKosular = tumKosular.filter(
-              k => new Date(k.created_at) >= sinir);
+              k => k && k.created_at && new Date(k.created_at) >= sinir);
             let saniye = 0;
             for (const k of sonKosular) {
               const bas = new Date(k.run_started_at || k.created_at);
