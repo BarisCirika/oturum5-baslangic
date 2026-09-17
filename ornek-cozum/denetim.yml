@@ -1,0 +1,176 @@
+# A7 REFERANS ÇÖZÜM — PR'da otomatik denetim
+#
+# ÖNEMLİ: Bu workflow VARSAYILAN OLARAK **MOCK** modda çalışır.
+#   MOCK  -> otomasyon/denetim_mock.py (deterministik kurallar)
+#            SIFIR API MALIYETI. Hat uctan uca gercekten calisir:
+#            PR -> runner -> denetim -> PR yorumu.
+#   GERCEK-> claude -p ile model tabanli denetim. PARA HARCAR.
+#            Yalniz repo degiskeni DENETIM_MOD=GERCEK ise ve
+#            ANTHROPIC_API_KEY secret'i tanimliysa calisir.
+#
+# Dersteki karar: **gercek kosu yapmiyoruz** — MOCK ile hattin tamamini
+# ogreniyoruz. Gercek modu isteyen kendi deposunda, kendi butcesiyle acar.
+#
+# Ders notu: MOCK adimi DETERMINISTIK kontrol yapar -> KAPI gorevi (bloklar).
+# Model tabanli denetim MUHAKEME ekler -> DANISMAN gorevi (yorumlar).
+# Uretimde ikisi birlikte kullanilir.
+
+name: denetim
+
+# UC TETIKLEYICI, UC AYRI IS:
+#   pull_request -> KAPI      : kod ana dala GIRMEDEN once denetler,
+#                               sonucu PR yorumu olarak yazar
+#   push (main)  -> GUVENLIK AGI: PR acmadan dogrudan main'e push edenleri
+#                               de denetler (yalniz calisanlar icin SART)
+#   schedule     -> TARAMA    : zamanla/dis dunyayla ilgili isler
+#
+# NOT: kirmizi check tek basina merge'i ENGELLEMEZ. Gercek engelleme icin
+# depo ayarlarindan branch protection acilip bu denetim "required status
+# check" yapilmalidir. O ayar olmadan CI "cok hizli uyaran bir cron"dur.
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main]            # PR acmadan push edenler de denetlensin
+  schedule:
+    - cron: "0 3 * * *"         # UTC! yerel saat degil
+  workflow_dispatch:            # elle tetikleme (test icin)
+
+# Ayni dal icin tek kosu: iki ajan ayni depoda calismasin
+concurrency:
+  group: denetim-${{ github.ref }}
+  cancel-in-progress: true
+
+# En az ayricalik: okuma + yorum yazma (repo ayarina bagimli kalmamak icin
+# burada ILAN EDIYORUZ; aksi halde 403 alinir)
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  denetim:
+    runs-on: ubuntu-latest      # Linux: ucretsiz dakika carpani 1x
+    timeout-minutes: 10         # asili kalirsa BASARISIZ olsun
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # diff icin gecmis gerekir
+
+      - name: Kapsami belirle
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # PR: yalniz DEGISEN dosyalar (ucuz ve odakli)
+            git diff --name-only origin/${{ github.base_ref }}...HEAD > kapsam.txt
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            # push: son commit'te degisenler (yoksa tum dosyalar)
+            git diff --name-only HEAD~1 HEAD > kapsam.txt 2>/dev/null || git ls-files > kapsam.txt
+          else
+            # cron / elle: tum dosyalar
+            git ls-files > kapsam.txt
+          fi
+          echo "--- kapsam ---"; cat kapsam.txt
+          echo "dosya sayisi: $(wc -l < kapsam.txt)"
+
+      # ------------------------------------------------------------------
+      # MOCK DENETIM (varsayilan) — sifir API maliyeti
+      # ------------------------------------------------------------------
+      - name: Denetimi kostur (MOCK)
+        if: vars.DENETIM_MOD != 'GERCEK'
+        id: mock
+        continue-on-error: true          # bulgu varsa rapor yine yazilsin
+        run: python3 otomasyon/denetim_mock.py kapsam.txt rapor.md sonuc.json
+
+      # ------------------------------------------------------------------
+      # GERCEK DENETIM (istege bagli, PARA HARCAR) — kapali gelir
+      # ------------------------------------------------------------------
+      - name: Node kur (yalniz GERCEK mod)
+        if: vars.DENETIM_MOD == 'GERCEK'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Claude Code kur (yalniz GERCEK mod)
+        if: vars.DENETIM_MOD == 'GERCEK'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Denetimi kostur (GERCEK - butceli)
+        if: vars.DENETIM_MOD == 'GERCEK'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GIT_TERMINAL_PROMPT: "0"       # kimlik sorusu yerine hata
+        run: |
+          claude -p "kapsam.txt dosyasinda listelenen dosyalari denetle.
+          GUVENLIK: OWASP Top 10 gozuyle injection, kimlik dogrulama,
+          erisim kontrolu, hassas veri ifsasi, koda gomulu sir ara.
+          SEO: HTML dosyalarinda title/meta/h1/alt eksigi.
+          Her bulgu icin dosya:satir, etki (yuksek|orta|dusuk) ve tek
+          cumlelik duzeltme yaz. Kod DEGISTIRME, sadece rapor uret.
+          Ciktinin sonunda tek satir JSON: {\"durum\":\"tamam\",\"bulgu_sayisi\":N}" \
+            --output-format json \
+            --allowedTools "Read,Grep,Glob" \
+            --max-turns 12 \
+            --max-budget-usd 1.00 \
+            > sonuc_ham.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open("sonuc_ham.json"))
+          metin = d.get("result", "") or ""
+          open("rapor.md", "w", encoding="utf-8").write(
+              "## Otomatik denetim raporu (GERCEK mod)\n\n" + metin +
+              f"\n\n---\n_Maliyet: {d.get('total_cost_usd', 0)} USD_\n")
+          json.dump({"durum": "tamam" if metin.strip() else "hata",
+                     "mod": "GERCEK"}, open("sonuc.json", "w"))
+          PY
+
+      # ------------------------------------------------------------------
+      # DOGRULAMA KAPISI: cikis kodu 0 olsa bile SONUCUN ICERIGINE bak
+      # ------------------------------------------------------------------
+      - name: Sonucu dogrula
+        id: dogrula
+        run: |
+          test -s rapor.md || { echo "HATA: rapor bos - denetim gercekte kosmadi"; exit 1; }
+          python3 - <<'PY'
+          import json, os
+          d = json.load(open("sonuc.json"))
+          print("ozet:", d)
+          yuksek = int(d.get("yuksek", 0) or 0)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"yuksek={yuksek}\n")
+              f.write(f"durum={d.get('durum','bilinmiyor')}\n")
+          PY
+
+      - name: PR'a yorum yaz
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: fs.readFileSync('rapor.md', 'utf8')
+            });
+
+      - name: Gece kosusunda issue ac
+        if: github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Denetim (${context.eventName}) - ${new Date().toISOString().slice(0,10)}`,
+              body: fs.readFileSync('rapor.md', 'utf8')
+            });
+
+      # KAPI: yuksek etkili bulgu varsa kosu KIRMIZI yansin (rapor yazildiktan SONRA)
+      - name: Yuksek etkili bulgu varsa basarisiz ol
+        if: steps.dogrula.outputs.yuksek != '0'
+        run: |
+          echo "Yuksek etkili ${{ steps.dogrula.outputs.yuksek }} bulgu var." >&2
+          exit 1
